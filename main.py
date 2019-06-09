@@ -6,40 +6,35 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
 import torch.nn.functional as F
 from torch.autograd import Variable
-
+import scipy.io
 
 def split_data(sentences, labels):
+    np.random.seed(12)
+    split_frac = 0.8
     len_feat = len(sentences)
     indexes = np.random.permutation(len_feat)
     sentences = np.array(sentences)[indexes]
     labels = np.array(labels)[indexes]
-    split_frac = 0.8
-    train_x = sentences[0:int(split_frac*len_feat)]
-    train_y = labels[0:int(split_frac*len_feat)]
-    test_x = sentences[int(split_frac*len_feat):]
-    test_y = labels[int(split_frac*len_feat):]
-    return train_x, train_y, test_x, test_y
+    return (sentences[0:int(split_frac*len_feat)],
+            labels[0:int(split_frac*len_feat)],
+            sentences[int(split_frac*len_feat):],
+            labels[int(split_frac*len_feat):])
 
-
-def read_data(mlp=False):
-    ## FAKE DATA
-    dim_emb = 6 * 2 * 2
-    dim_serie = 16
-    n_embeddings = 50
-    n_inputs = 1000
-    embeddings = [ [ np.random.rand(dim_emb).astype(np.float32) for _ in range(dim_serie) ]
-                   for _ in range(n_embeddings) ]
-    labels = [ np.random.randint(n_embeddings) for _ in range(n_inputs) ]
+def read_data(params, data_dir="./data/", mlp=False):
+    embeddings = [ scipy.io.loadmat(data_dir + f)["data"].astype(np.float32)
+                   for f in os.listdir(data_dir) ]
+    max_label = len(embeddings)
+    labels = []
+    for i in range(len(embeddings)):
+        labels += [i] * len(embeddings[i])
+    embeddings = np.concatenate(embeddings)
     if mlp:
-        input = [ np.array(embeddings[y]).flatten() for y in labels ]
+        input = embeddings.reshape((len(embeddings), params["series_dim"] * params["input_dim"]))
     else:
-        input = [ embeddings[y] for y in labels ]
-    train_x, train_y, test_x, test_y = split_data(input, labels)
-    return train_x, train_y, test_x, test_y
-
+        input = embeddings.reshape((len(embeddings), params["series_dim"], params["input_dim"]))
+    return split_data(input, labels), max_label
 
 class RNN(nn.Module):
     def __init__(self, params):
@@ -47,8 +42,8 @@ class RNN(nn.Module):
 
         self.rnn = nn.LSTM(params["input_dim"],
                            params["hidden_dim"],
-                           num_layers=params["n_layers"],
-                           bidirectional=params["bidirectional"],
+                           num_layers=1,
+                           bidirectional=False,
                            dropout=params["dropout"])
 
         self.fc = nn.Linear(params["hidden_dim"], params["output_dim"])
@@ -59,18 +54,23 @@ class RNN(nn.Module):
         # input = [sent len, batch size]
         input = self.dropout(input)
         output, (h, c) = self.rnn(input)
-
-        return self.log_softmax(self.fc(self.dropout(h)).squeeze(0))
-
+        return self.log_softmax(self.fc(self.dropout(h[-1])).squeeze(0))
 
 class MLP(nn.Module):
     def __init__(self, params):
         super().__init__()
-        self.fc = nn.Linear(params["input_dim"], params["output_dim"])
+        self.model = nn.Sequential(
+            nn.Linear(in_features=params["series_dim"] * params["input_dim"],
+                      out_features=params["hidden_dim"]),
+            nn.Dropout(params["dropout"]),
+            nn.ReLU(),
+            nn.Linear(in_features=params["hidden_dim"], out_features=params["output_dim"]),
+        )
+        self.dropout = nn.Dropout(params["dropout"])
         self.log_softmax = nn.LogSoftmax()
 
     def forward(self, input):
-        return self.log_softmax(self.fc(input).squeeze(0))
+        return self.log_softmax(self.model(input).squeeze(0))
 
 def binary_accuracy(preds, y):
     _, preds = preds.max(1)
@@ -114,17 +114,16 @@ def start_model():
 
     params = {
         "model": "MLP",
-        "input_dim": 6 * 2 * 2 * 16,
+        "series_dim": 16,
+        "input_dim": 6 * 2 * 2,
         "hidden_dim": 100,
-        "n_epochs": 10,
-        "batch_size": 8,
-        "output_dim": 50,
-        "n_layers": 1,
-        "bidirectional": False,
+        "n_epochs": 500,
+        "batch_size": 50,
         "dropout": 0.
     }
 
-    train_x, train_y, test_x, test_y = read_data(mlp=params["model"] == "MLP")
+    (train_x, train_y, test_x, test_y), max_label = read_data(params, mlp=params["model"] == "MLP")
+    params["output_dim"] = max_label
 
     if params["model"] == "MLP":
         model = MLP(params)
@@ -143,8 +142,7 @@ def start_model():
             model, params, test_x, test_y, optimizer, criterion, grad=False)
         print ("TEST Epoch: {}, Loss: {}, Accuracy: {}".format(epoch, test_loss, test_acc))
 
-    l1, l2 = list(model.parameters())
-
+    print (test_y)
 def main():
     start_model()
 
