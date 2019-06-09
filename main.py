@@ -24,7 +24,7 @@ def split_data(sentences, labels):
 
 def read_data(params, data_dir="./data/", mlp=False):
     embeddings = [ scipy.io.loadmat(data_dir + f)["data"].astype(np.float32)
-                   for f in os.listdir(data_dir) ]
+                   for f in os.listdir(data_dir) if f.find(".mat") != -1 ]
     max_label = len(embeddings)
     labels = []
     for i in range(len(embeddings)):
@@ -113,7 +113,7 @@ def train(model, params, inputs, labels, optimizer, criterion, grad=False):
 def start_model():
 
     params = {
-        "model": "MLP",
+        "model": "LSTM",
         "series_dim": 16,
         "input_dim": 6 * 2 * 2,
         "hidden_dim": 100,
